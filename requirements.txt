@@ -1,0 +1,16 @@
+# Database connectors
+psycopg2-binary==2.9.9
+trino==0.328.0
+
+# Data generation
+faker==20.1.0
+
+# Data processing
+pandas==2.1.4
+pyarrow==14.0.1
+
+# HDFS
+hdfs==2.7.3
+
+# Utilities
+python-dotenv==1.0.0

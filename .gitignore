@@ -1,0 +1,23 @@
+﻿# Python
+__pycache__/
+*.pyc
+venv/
+
+# Données
+data/
+*.csv
+*.json
+*.parquet
+
+# Logs et outputs
+logs/
+*.log
+output/
+
+# IDE
+.vscode/
+.idea/
+
+# Système
+.DS_Store
+Thumbs.db

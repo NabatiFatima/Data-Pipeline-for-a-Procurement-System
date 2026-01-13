@@ -1,0 +1,15 @@
+python3 -m venv venv
+venv\Scripts\activate
+ docker cp "D:\yassi\apps\Projet big data\procurement-project\sql\schema_postgresql.sql" postgres:/schema_postgresql.sql 
+psql -U postgres -d procurement_db -f /schema_postgresql.sql
+psql -U "$POSTGRES_USER" -d postgres
+\du
+\c procurement_db
+\i /schema_postgresql.sql
+\dt *.*
+--------------------------------------
+Get-ChildItem data/raw/orders/
+Get-ChildItem data/raw/stock/
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+python scripts/procurement_pipeline.py --date 2026-01-11 --skip-data-gen
+
