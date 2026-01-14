@@ -1,42 +1,37 @@
 -- ============================================================
 -- SCHEMA
 -- ============================================================
-CREATE SCHEMA IF NOT EXISTS hive.procurement;
+DROP TABLE IF EXISTS hive.procurement.stock;
 
--- ============================================================
--- ORDERS (EXTERNAL)
--- ============================================================
-CREATE TABLE IF NOT EXISTS hive.procurement.orders (
-    order_id VARCHAR,
-    store_id VARCHAR,
-    order_date VARCHAR,
-    order_timestamp VARCHAR,
-    sku VARCHAR,
-    quantity INTEGER,
-    unit_price DOUBLE,
-    total_price DOUBLE,
-    dt VARCHAR
+CREATE TABLE hive.procurement.stock (
+    sku varchar,
+    available_quantity integer,
+    reserved_quantity integer,
+    in_transit_quantity integer,
+    dt varchar
 )
 WITH (
     format = 'PARQUET',
-    external_location = 'hdfs://namenode:9000/warehouse/procurement/orders/',
+    external_location = 'hdfs://namenode:9000/raw/stock',
     partitioned_by = ARRAY['dt']
 );
+DROP TABLE IF EXISTS hive.procurement.orders;
 
--- ============================================================
--- STOCK (EXTERNAL)
--- ============================================================
-CREATE TABLE IF NOT EXISTS hive.procurement.stock (
-    snapshot_date VARCHAR,
-    warehouse_id VARCHAR,
-    sku VARCHAR,
-    available_quantity INTEGER,
-    reserved_quantity INTEGER,
-    in_transit_quantity INTEGER,
-    dt VARCHAR
+CREATE TABLE hive.procurement.orders (
+    order_id varchar,
+    store_id varchar,
+    order_date varchar,
+    order_timestamp varchar,
+    sku varchar,
+    quantity integer,
+    unit_price double,
+    total_price double,
+    dt varchar
 )
 WITH (
     format = 'PARQUET',
-    external_location = 'hdfs://namenode:9000/warehouse/procurement/stock/',
+    external_location = 'hdfs://namenode:9000/raw/orders',
     partitioned_by = ARRAY['dt']
 );
+CALL "hive"."system"."sync_partition_metadata"('procurement', 'stock', 'FULL');
+CALL "hive"."system"."sync_partition_metadata"('procurement', 'orders', 'FULL');
