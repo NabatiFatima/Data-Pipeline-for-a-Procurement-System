@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-PIPELINE PROCUREMENT - VERSION CORRIGÉE
-Corrections:
-1. Format JSON des commandes
-2. Schema Trino (hive.procurement au lieu de hive.default)
-3. Serialization JSON (Decimal)
-"""
+
 
 import os
 import sys
