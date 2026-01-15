@@ -1,8 +1,9 @@
 # ============================================
-# Pipeline quotidien - VERSION FINALE
+# Pipeline quotidien - Appelle pipeline.py
 # ============================================
 
 $ErrorActionPreference = "Continue"
+# CORRECTION: $PSScriptRoot pointe vers scripts/, on remonte d'un niveau
 $PROJECT_ROOT = Split-Path -Parent $PSScriptRoot
 $TIMESTAMP = Get-Date -Format "yyyy-MM-dd"
 $LOG_FILE = Join-Path $PROJECT_ROOT "data\logs\scheduled\pipeline_$TIMESTAMP.log"
@@ -23,7 +24,7 @@ $globalSuccess = $true
 
 try {
     # ===== 1. DOCKER =====
-    Write-Host "`n[1/6] Verification Docker..." -ForegroundColor Yellow
+    Write-Host "`n[1/5] Verification Docker..." -ForegroundColor Yellow
     
     $dockerTest = docker ps 2>&1 | Out-String
     if ($dockerTest -match "CONTAINER ID") {
@@ -33,8 +34,19 @@ try {
         throw "Docker n est pas demarre"
     }
 
+    # Vérifier les containers nécessaires
+    $containers = @('postgres-procurement', 'namenode', 'trino')
+    foreach ($container in $containers) {
+        $running = docker ps --filter "name=$container" --format "{{.Names}}" 2>&1
+        if ($running -match $container) {
+            Write-Host "  OK Container $container actif" -ForegroundColor Green
+        } else {
+            Write-Host "  ATTENTION Container $container non trouve" -ForegroundColor Yellow
+        }
+    }
+
     # ===== 2. PYTHON =====
-    Write-Host "`n[2/6] Verification Python..." -ForegroundColor Yellow
+    Write-Host "`n[2/5] Verification Python..." -ForegroundColor Yellow
     
     $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) { "python" } else { "python3" }
     $pythonVersion = & $pythonCmd --version 2>&1
@@ -45,170 +57,119 @@ try {
         throw "Python non disponible"
     }
 
-    # ===== 3. POSTGRESQL =====
-    Write-Host "`n[3/6] Configuration PostgreSQL..." -ForegroundColor Yellow
+    # ===== 3. GENERATION DONNEES JSON =====
+    Write-Host "`n[3/5] Generation des donnees JSON..." -ForegroundColor Yellow
     
-    $env:PGPASSWORD = "postgres"
-    
-    $pgTest = docker exec postgres-procurement psql -U postgres -d procurement -c "\dt" 2>&1 | Out-String
-    
-    if ($pgTest -match "products" -or $pgTest -match "table") {
-        Write-Host "  OK Base de donnees accessible" -ForegroundColor Green
-    } else {
-        Write-Host "  ATTENTION Base de donnees peut-etre vide" -ForegroundColor Yellow
-    }
-    
-    # Creer la vue
-    $createViewSQL = @"
-DROP VIEW IF EXISTS product_suppliers;
-CREATE VIEW product_suppliers AS
-SELECT 
-    ps.product_id,
-    ps.supplier_id,
-    ps.lead_time_days,
-    ps.min_order_qty,
-    ps.price_per_unit,
-    ps.is_preferred,
-    ps.last_delivery_date,
-    ps.reliability_score,
-    p.name as product_name,
-    p.category,
-    p.unit_price,
-    s.name as supplier_name,
-    s.country,
-    s.rating
-FROM product_supplier ps
-JOIN products p ON ps.product_id = p.product_id
-JOIN suppliers s ON ps.supplier_id = s.supplier_id
-WHERE ps.is_active = true;
-"@
-
-    $viewResult = $createViewSQL | docker exec -i postgres-procurement psql -U postgres -d procurement 2>&1 | Out-String
-    
-    if ($viewResult -match "CREATE VIEW" -or $viewResult -match "DROP VIEW") {
-        Write-Host "  OK Vue product_suppliers prete" -ForegroundColor Green
-    }
-
-    # ===== 4. GENERATION COMMANDES POS =====
-    Write-Host "`n[4/6] Generation commandes POS..." -ForegroundColor Yellow
-    
-    # Chercher le script existant
+    # Chercher les scripts
     $ordersScript = Join-Path $PROJECT_ROOT "scripts\generate_daily_orders.py"
-    if (-not (Test-Path $ordersScript)) {
-        $ordersScript = Join-Path $PROJECT_ROOT "scripts\generate_pos_orders.py"
-    }
+    $stockScript = Join-Path $PROJECT_ROOT "scripts\generate_daily_stock.py"
     
     if (-not (Test-Path $ordersScript)) {
-        throw "Script orders introuvable"
+        throw "Script orders introuvable: $ordersScript"
     }
     
-    Write-Host "  Script: $ordersScript" -ForegroundColor Gray
+    if (-not (Test-Path $stockScript)) {
+        throw "Script stock introuvable: $stockScript"
+    }
     
+    # Générer commandes
+    Write-Host "  Generation commandes POS..." -ForegroundColor Cyan
     & $pythonCmd $ordersScript --date $TIMESTAMP 2>&1 | ForEach-Object {
-        Write-Host "  $_" -ForegroundColor Gray
+        if ($_ -match "Total:|Fichiers") {
+            Write-Host "    $_" -ForegroundColor Gray
+        }
     }
     
     if ($LASTEXITCODE -ne 0) {
-        throw "Erreur generation commandes POS"
+        throw "Erreur generation commandes"
     }
     
-    # Verifier les fichiers
-    $ordersPath = Join-Path $PROJECT_ROOT "data\raw\orders\$TIMESTAMP"
-    if (Test-Path $ordersPath) {
-        $orderFiles = @(Get-ChildItem $ordersPath -Filter "*.csv")
-        if ($orderFiles.Count -gt 0) {
-            $totalLines = 0
-            foreach ($file in $orderFiles) {
-                $lines = (Get-Content $file.FullName | Measure-Object -Line).Lines - 1
-                $totalLines += $lines
-            }
-            Write-Host "  OK $($orderFiles.Count) fichiers, $totalLines commandes" -ForegroundColor Green
-        } else {
-            throw "Aucun fichier CSV genere"
-        }
-    } else {
-        throw "Dossier orders non cree"
-    }
-
-    # ===== 5. GENERATION STOCKS =====
-    Write-Host "`n[5/6] Generation stocks entrepots..." -ForegroundColor Yellow
-    
-    # Chercher le script existant
-    $stockScript = Join-Path $PROJECT_ROOT "scripts\generate_daily_stock.py"
-    if (-not (Test-Path $stockScript)) {
-        $stockScript = Join-Path $PROJECT_ROOT "scripts\generate_warehouse_stock.py"
-    }
-    
-    if (-not (Test-Path $stockScript)) {
-        throw "Script stock introuvable"
-    }
-    
-    Write-Host "  Script: $stockScript" -ForegroundColor Gray
-    
+    # Générer stocks
+    Write-Host "  Generation stocks..." -ForegroundColor Cyan
     & $pythonCmd $stockScript --date $TIMESTAMP 2>&1 | ForEach-Object {
-        Write-Host "  $_" -ForegroundColor Gray
+        if ($_ -match "Total:|Fichier") {
+            Write-Host "    $_" -ForegroundColor Gray
+        }
     }
     
     if ($LASTEXITCODE -ne 0) {
         throw "Erreur generation stocks"
     }
     
-    # Verifier les fichiers
+    # Vérifier les fichiers JSON
+    $ordersPath = Join-Path $PROJECT_ROOT "data\raw\orders\$TIMESTAMP"
     $stockPath = Join-Path $PROJECT_ROOT "data\raw\stock\$TIMESTAMP"
+    
+    if (Test-Path $ordersPath) {
+        $jsonFiles = @(Get-ChildItem $ordersPath -Filter "*.json")
+        Write-Host "  OK Orders: $($jsonFiles.Count) fichiers JSON" -ForegroundColor Green
+    } else {
+        throw "Dossier orders non cree"
+    }
+    
     if (Test-Path $stockPath) {
-        $stockFiles = @(Get-ChildItem $stockPath -Filter "*.csv")
-        if ($stockFiles.Count -gt 0) {
-            $totalLines = 0
-            foreach ($file in $stockFiles) {
-                $lines = (Get-Content $file.FullName | Measure-Object -Line).Lines - 1
-                $totalLines += $lines
-            }
-            Write-Host "  OK $($stockFiles.Count) fichiers, $totalLines lignes" -ForegroundColor Green
-        } else {
-            throw "Aucun fichier CSV genere"
-        }
+        $jsonFiles = @(Get-ChildItem $stockPath -Filter "*.json")
+        Write-Host "  OK Stock: $($jsonFiles.Count) fichiers JSON" -ForegroundColor Green
     } else {
         throw "Dossier stock non cree"
     }
 
-    # ===== 6. AIRFLOW (optionnel) =====
-    Write-Host "`n[6/6] Declenchement Airflow..." -ForegroundColor Yellow
+    # ===== 4. EXECUTION PROCUREMENT_PIPELINE.PY =====
+    Write-Host "`n[4/5] Execution du pipeline principal..." -ForegroundColor Yellow
     
-    try {
-        $airflowAPI = "http://localhost:8080/api/v1/dags/procurement_pipeline/dagRuns"
-        $body = @{
-            conf = @{ date = $TIMESTAMP }
-        } | ConvertTo-Json
+    $pipelineScript = Join-Path $PROJECT_ROOT "scripts\procurement_pipeline.py"
+    
+    if (-not (Test-Path $pipelineScript)) {
+        Write-Host "  ATTENTION procurement_pipeline.py non trouve" -ForegroundColor Yellow
+        Write-Host "  Chemin recherche: $pipelineScript" -ForegroundColor Gray
+        Write-Host "  Les donnees JSON sont generees mais le traitement complet n est pas execute" -ForegroundColor Yellow
+    } else {
+        Write-Host "  Lancement procurement_pipeline.py..." -ForegroundColor Cyan
         
-        $headers = @{
-            Authorization = "Basic " + [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("airflow:airflow"))
-        }
-        
-        $response = Invoke-RestMethod -Uri $airflowAPI -Method Post -Body $body -ContentType "application/json" -Headers $headers -TimeoutSec 5
-        Write-Host "  OK DAG declenche: $($response.dag_run_id)" -ForegroundColor Green
-    } catch {
-        Write-Host "  INFO Airflow non disponible (ignore)" -ForegroundColor Yellow
-    }
-
-    # ===== GENERATION COMMANDES FOURNISSEURS =====
-    Write-Host "`n[7/7] Generation commandes fournisseurs..." -ForegroundColor Yellow
-    
-    $supplierScript = Join-Path $PROJECT_ROOT "scripts\generate_supplier_orders.py"
-    
-    if (Test-Path $supplierScript) {
-        & $pythonCmd $supplierScript --date $TIMESTAMP 2>&1 | ForEach-Object {
-            Write-Host "  $_" -ForegroundColor Gray
+        # Exécuter procurement_pipeline.py avec la date
+        & $pythonCmd $pipelineScript --date $TIMESTAMP 2>&1 | ForEach-Object {
+            Write-Host "  $_"
         }
         
         if ($LASTEXITCODE -eq 0) {
-            $supplierOrdersPath = Join-Path $PROJECT_ROOT "data\processed\supplier_orders\$TIMESTAMP"
-            if (Test-Path $supplierOrdersPath) {
-                $supplierFiles = @(Get-ChildItem $supplierOrdersPath -Filter "*.json" -ErrorAction SilentlyContinue)
-                Write-Host "  OK $($supplierFiles.Count) commandes fournisseurs" -ForegroundColor Green
+            Write-Host "  OK Pipeline execute avec succes" -ForegroundColor Green
+        } else {
+            Write-Host "  ERREUR Pipeline echoue (code: $LASTEXITCODE)" -ForegroundColor Red
+            throw "procurement_pipeline.py a echoue"
+        }
+    }
+
+    # ===== 5. VERIFICATION RESULTATS =====
+    Write-Host "`n[5/5] Verification des resultats..." -ForegroundColor Yellow
+    
+    # Vérifier les commandes fournisseurs générées
+    $supplierOrdersPath = Join-Path $PROJECT_ROOT "data\output\supplier_orders\$TIMESTAMP"
+    
+    if (Test-Path $supplierOrdersPath) {
+        $supplierFiles = @(Get-ChildItem $supplierOrdersPath -Filter "*.json")
+        if ($supplierFiles.Count -gt 0) {
+            Write-Host "  OK Commandes fournisseurs: $($supplierFiles.Count) fichiers" -ForegroundColor Green
+            
+            # Afficher un résumé
+            $totalOrders = 0
+            foreach ($file in $supplierFiles) {
+                try {
+                    $content = Get-Content $file.FullName -Raw | ConvertFrom-Json
+                    if ($content.order_header) {
+                        $totalOrders += $content.order_header.total_units
+                    }
+                } catch {
+                    # Ignorer les erreurs de lecture
+                }
             }
+            if ($totalOrders -gt 0) {
+                Write-Host "  Total unites commandees: $totalOrders" -ForegroundColor Cyan
+            }
+        } else {
+            Write-Host "  INFO Aucune commande fournisseur generee" -ForegroundColor Yellow
         }
     } else {
-        Write-Host "  INFO Script supplier_orders non trouve (ignore)" -ForegroundColor Yellow
+        Write-Host "  INFO Dossier commandes fournisseurs non cree" -ForegroundColor Yellow
     }
 
     # ===== SUCCES =====
