@@ -43,6 +43,16 @@ if (Test-Path $mainScript) {
     $allOk = $false
 }
 
+# Script Python principal (pipeline de traitement)
+$pipelineScript = Join-Path $PROJECT_ROOT "scripts\procurement_pipeline.py"
+if (Test-Path $pipelineScript) {
+    $size = [math]::Round((Get-Item $pipelineScript).Length / 1KB, 2)
+    Write-Host "  [OK] procurement_pipeline.py ($size KB)" -ForegroundColor Green
+} else {
+    Write-Host "  [MANQUANT] procurement_pipeline.py (critique)" -ForegroundColor Red
+    $allOk = $false
+}
+
 # Script génération commandes (plusieurs noms possibles)
 $ordersScripts = @(
     "scripts\generate_daily_orders.py",
