@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Générateur de commandes POS avec Faker
+Générateur de commandes POS - Format JSON
 """
 
 import sys
 import os
 from pathlib import Path
 from datetime import datetime, timedelta
-import pandas as pd
-import numpy as np
+import json
 import argparse
 from faker import Faker
+import random
 
 # Forcer l'encodage UTF-8 pour Windows
 if sys.platform == 'win32':
@@ -19,10 +19,8 @@ if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-# Initialiser Faker (une seule locale pour éviter les erreurs)
+# Initialiser Faker
 fake = Faker('fr_FR')
-# Importer random standard
-import random
 
 # Catégories de produits
 CATEGORIES = {
@@ -34,7 +32,6 @@ CATEGORIES = {
     'Sports': ['Ball', 'Racket', 'Weights', 'Yoga Mat', 'Bicycle', 'Sneakers']
 }
 
-# Cache de produits
 _PRODUCTS_CACHE = None
 
 def generate_products(num_products=200):
@@ -46,17 +43,15 @@ def generate_products(num_products=200):
     
     products = []
     for i in range(1, num_products + 1):
-        category = fake.random_element(list(CATEGORIES.keys()))
-        product_type = fake.random_element(CATEGORIES[category])
+        category = random.choice(list(CATEGORIES.keys()))
+        product_type = random.choice(CATEGORIES[category])
         brand = fake.company()
         
         product = {
-            'product_id': f"PROD{i:03d}",
-            'name': f"{brand} {product_type}",
+            'sku': f"PROD{i:03d}",
+            'product_name': f"{brand} {product_type}",
             'category': category,
-            'unit_price': round(random.uniform(5.0, 500.0), 2),
-            'weight_kg': round(random.uniform(0.1, 20.0), 2),
-            'barcode': fake.ean13()
+            'unit_price': round(random.uniform(5.0, 500.0), 2)
         }
         products.append(product)
     
@@ -71,20 +66,15 @@ def generate_stores(num_stores=5):
     for i in range(1, num_stores + 1):
         store = {
             'store_id': f"STORE{i:02d}",
-            'name': f"{fake.company()} - {cities[i-1]}",
-            'address': fake.street_address(),
-            'city': cities[i-1],
-            'postal_code': fake.postcode(),
-            'manager': fake.name(),
-            'phone': fake.phone_number(),
-            'email': fake.email()
+            'store_name': f"{fake.company()} - {cities[i-1]}",
+            'city': cities[i-1]
         }
         stores.append(store)
     
     return stores
 
 def generate_daily_orders(target_date=None):
-    """Générer les commandes pour UN SEUL JOUR avec Faker"""
+    """Générer les commandes en JSON pour UN SEUL JOUR"""
     if target_date is None:
         target_date = datetime.now().date()
     
@@ -98,73 +88,62 @@ def generate_daily_orders(target_date=None):
     products = generate_products(200)
     stores = generate_stores(5)
     
-    all_orders = []
+    total_orders = 0
     
     for store in stores:
         store_id = store['store_id']
         
-        # Nombre de commandes aléatoire selon le jour
+        # Nombre de commandes aléatoire
         is_weekend = target_date.weekday() >= 5
         base_orders = 300 if is_weekend else 250
-        n_orders = np.random.randint(base_orders - 50, base_orders + 100)
+        n_orders = random.randint(base_orders - 50, base_orders + 100)
         
         store_orders = []
         
         for i in range(n_orders):
-            product = fake.random_element(products)
+            product = random.choice(products)
             
-            # Heure de commande réaliste (8h-22h)
-            order_hour = np.random.randint(8, 23)
-            order_minute = np.random.randint(0, 60)
-            order_time = datetime.combine(target_date, datetime.min.time()) + timedelta(hours=order_hour, minutes=order_minute)
+            # Heure de commande réaliste
+            order_hour = random.randint(8, 22)
+            order_minute = random.randint(0, 59)
+            order_second = random.randint(0, 59)
+            order_time = datetime.combine(
+                target_date, 
+                datetime.min.time()
+            ).replace(hour=order_hour, minute=order_minute, second=order_second)
             
-            # Quantité selon le prix (produits chers = petites quantités)
+            # Quantité selon le prix
             if product['unit_price'] > 200:
-                quantity = np.random.randint(1, 3)
+                quantity = random.randint(1, 3)
             elif product['unit_price'] > 50:
-                quantity = np.random.randint(1, 10)
+                quantity = random.randint(1, 10)
             else:
-                quantity = np.random.randint(1, 50)
+                quantity = random.randint(1, 50)
             
             order = {
                 'order_id': f"{store_id}_{target_date}_{i:05d}",
                 'store_id': store_id,
-                'store_name': store['name'],
-                'product_id': product['product_id'],
-                'product_name': product['name'],
-                'category': product['category'],
+                'order_date': str(target_date),
+                'order_timestamp': order_time.isoformat(),
+                'sku': product['sku'],
                 'quantity': quantity,
                 'unit_price': product['unit_price'],
-                'total_amount': round(quantity * product['unit_price'], 2),
-                'order_date': str(target_date),
-                'order_time': order_time.strftime('%H:%M:%S'),
-                'timestamp': order_time.isoformat(),
-                'customer_type': fake.random_element(['Regular', 'Premium', 'New']),
-                'payment_method': fake.random_element(['Card', 'Cash', 'Mobile'])
+                'total_price': round(quantity * product['unit_price'], 2)
             }
             store_orders.append(order)
         
-        # Sauvegarder par magasin
-        df = pd.DataFrame(store_orders)
-        output_file = output_dir / f"{store_id}_orders_{target_date}.csv"
-        df.to_csv(output_file, index=False, encoding='utf-8')
+        # Sauvegarder en JSON par magasin
+        output_file = output_dir / f"{store_id}_orders_{target_date}.json"
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(store_orders, f, indent=2, ensure_ascii=False)
         
-        print(f"  Magasin {store_id} ({store['city']})... {len(df)} commandes | Total: {df['total_amount'].sum():,.2f} EUR")
-        all_orders.extend(store_orders)
+        print(f"  Magasin {store_id}: {len(store_orders)} commandes")
+        total_orders += len(store_orders)
     
-    # Statistiques globales
-    df_all = pd.DataFrame(all_orders)
-    total_revenue = df_all['total_amount'].sum()
-    avg_order = df_all['total_amount'].mean()
+    print(f"\nTotal: {total_orders} commandes pour {target_date}")
+    print(f"Fichiers JSON sauvegardes dans: {output_dir}")
     
-    print(f"\n{'='*60}")
-    print(f"Total: {len(all_orders)} commandes pour {target_date}")
-    print(f"Revenu total: {total_revenue:,.2f} EUR")
-    print(f"Panier moyen: {avg_order:.2f} EUR")
-    print(f"Fichiers sauvegardes dans: {output_dir}")
-    print(f"{'='*60}")
-    
-    return df_all
+    return total_orders
 
 def generate_historical_orders(num_days=7, end_date=None):
     """Générer l'historique"""
@@ -184,7 +163,7 @@ def generate_historical_orders(num_days=7, end_date=None):
     print(f"{'='*60}")
 
 def main():
-    parser = argparse.ArgumentParser(description='Generer des commandes POS avec Faker')
+    parser = argparse.ArgumentParser(description='Generer des commandes POS en JSON')
     parser.add_argument('--date', type=str, help='Date au format YYYY-MM-DD (defaut: aujourd\'hui)')
     parser.add_argument('--history-days', type=int, default=0,
                        help='Nombre de jours d\'historique (defaut: 0 = aujourd\'hui uniquement)')
