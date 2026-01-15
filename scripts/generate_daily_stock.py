@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Générateur de stocks entrepôts avec Faker
+Générateur de stocks entrepôts - Format JSON
 """
 
 import sys
 import os
 from pathlib import Path
 from datetime import datetime, timedelta
-import pandas as pd
-import numpy as np
+import json
 import argparse
 from faker import Faker
+import random
 
 # Forcer l'encodage UTF-8 pour Windows
 if sys.platform == 'win32':
@@ -19,33 +19,11 @@ if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-# Initialiser Faker (une seule locale)
+# Initialiser Faker
 fake = Faker('fr_FR')
-# Importer random standard
-import random
-
-def generate_warehouses(num_warehouses=3):
-    """Générer des entrepôts réalistes"""
-    cities = ['Paris', 'Lyon', 'Marseille', 'Bordeaux', 'Lille']
-    
-    warehouses = []
-    for i in range(1, num_warehouses + 1):
-        warehouse = {
-            'warehouse_id': f"WH{i:02d}",
-            'name': f"Entrepot {cities[i-1]}",
-            'address': fake.street_address(),
-            'city': cities[i-1],
-            'postal_code': fake.postcode(),
-            'capacity_m3': np.random.randint(1000, 5000),
-            'manager': fake.name(),
-            'phone': fake.phone_number()
-        }
-        warehouses.append(warehouse)
-    
-    return warehouses
 
 def generate_daily_stock(target_date=None):
-    """Générer les stocks pour UN SEUL JOUR avec Faker"""
+    """Générer les stocks en JSON pour UN SEUL JOUR"""
     if target_date is None:
         target_date = datetime.now().date()
     
@@ -55,95 +33,65 @@ def generate_daily_stock(target_date=None):
     
     print(f"\nGeneration des stocks pour {target_date}")
     
-    # Générer les entrepôts
-    warehouses = generate_warehouses(3)
+    # Entrepôts
+    warehouses = [
+        {'warehouse_id': 'WH01', 'name': 'Entrepot Paris'},
+        {'warehouse_id': 'WH02', 'name': 'Entrepot Lyon'},
+        {'warehouse_id': 'WH03', 'name': 'Entrepot Marseille'}
+    ]
     
     # Produits (200 SKUs)
     num_products = 200
+    total_lines = 0
     
+    # Générer UN SEUL fichier JSON consolidé pour tous les entrepôts
     all_stock = []
     
     for warehouse in warehouses:
         wh_id = warehouse['warehouse_id']
         
-        warehouse_stock = []
-        
         for i in range(1, num_products + 1):
-            product_id = f"PROD{i:03d}"
+            sku = f"PROD{i:03d}"
             
             # Stock selon type de produit
-            # Produits haute valeur = stock faible
-            # Produits courante = stock élevé
-            if i <= 50:  # Haute valeur (electronics, etc)
-                base_qty = np.random.randint(10, 200)
+            if i <= 50:  # Haute valeur
+                base_qty = random.randint(10, 200)
             elif i <= 150:  # Moyenne valeur
-                base_qty = np.random.randint(100, 500)
-            else:  # Faible valeur (commodités)
-                base_qty = np.random.randint(200, 1000)
+                base_qty = random.randint(100, 500)
+            else:  # Faible valeur
+                base_qty = random.randint(200, 1000)
             
             # Variation aléatoire
-            quantity = base_qty + np.random.randint(-50, 50)
+            quantity = base_qty + random.randint(-50, 50)
             quantity = max(0, quantity)
             
-            # Réservations (commandes en cours)
+            # Réservations
             reserved_qty = int(quantity * random.uniform(0.05, 0.25))
             available_qty = max(0, quantity - reserved_qty)
             
-            # Indicateurs de gestion
-            reorder_point = int(base_qty * 0.2)
-            needs_reorder = available_qty < reorder_point
-            
-            # Dernière réception
-            days_since_receipt = np.random.randint(1, 30)
-            last_receipt_date = target_date - timedelta(days=days_since_receipt)
+            # En transit (optionnel)
+            in_transit_qty = random.randint(0, int(quantity * 0.1))
             
             stock = {
-                'warehouse_id': wh_id,
-                'warehouse_name': warehouse['name'],
-                'product_id': product_id,
-                'quantity': quantity,
-                'reserved_qty': reserved_qty,
-                'available_qty': available_qty,
-                'reorder_point': reorder_point,
-                'needs_reorder': needs_reorder,
-                'last_receipt_date': str(last_receipt_date),
-                'days_since_receipt': days_since_receipt,
-                'location': f"A{np.random.randint(1,20):02d}-R{np.random.randint(1,10):02d}-S{np.random.randint(1,5):02d}",
-                'date': str(target_date),
-                'timestamp': datetime.now().isoformat()
+                'sku': sku,
+                'available_quantity': available_qty,
+                'reserved_quantity': reserved_qty,
+                'in_transit_quantity': in_transit_qty
             }
-            warehouse_stock.append(stock)
+            all_stock.append(stock)
         
-        # Sauvegarder par entrepôt
-        df = pd.DataFrame(warehouse_stock)
-        output_file = output_dir / f"{wh_id}_stock_{target_date}.csv"
-        df.to_csv(output_file, index=False, encoding='utf-8')
-        
-        # Statistiques
-        total_qty = df['quantity'].sum()
-        total_available = df['available_qty'].sum()
-        need_reorder_count = df['needs_reorder'].sum()
-        
-        print(f"  Entrepot {wh_id} ({warehouse['city']})...")
-        print(f"    - {len(df)} SKUs")
-        print(f"    - Stock total: {total_qty:,} unites")
-        print(f"    - Disponible: {total_available:,} unites")
-        print(f"    - A reapprovisionner: {need_reorder_count} produits")
-        
-        all_stock.extend(warehouse_stock)
+        print(f"  Entrepot {wh_id}: {num_products} SKUs")
+        total_lines += num_products
     
-    # Statistiques globales
-    df_all = pd.DataFrame(all_stock)
+    # Sauvegarder UN SEUL fichier JSON
+    output_file = output_dir / f"stock_{target_date}.json"
+    with open(output_file, 'w', encoding='utf-8') as f:
+        json.dump(all_stock, f, indent=2, ensure_ascii=False)
     
-    print(f"\n{'='*60}")
-    print(f"Total: {len(all_stock)} lignes de stock pour {target_date}")
-    print(f"Stock total: {df_all['quantity'].sum():,} unites")
-    print(f"Disponible: {df_all['available_qty'].sum():,} unites")
-    print(f"Reserve: {df_all['reserved_qty'].sum():,} unites")
-    print(f"Fichiers sauvegardes dans: {output_dir}")
-    print(f"{'='*60}")
+    print(f"\nTotal: {total_lines} lignes de stock pour {target_date}")
+    print(f"Fichier JSON sauvegarde: {output_file}")
     
-    return df_all
+    return total_lines
 
 def generate_historical_stock(num_days=7, end_date=None):
     """Générer l'historique"""
@@ -163,7 +111,7 @@ def generate_historical_stock(num_days=7, end_date=None):
     print(f"{'='*60}")
 
 def main():
-    parser = argparse.ArgumentParser(description='Generer des stocks entrepots avec Faker')
+    parser = argparse.ArgumentParser(description='Generer des stocks entrepots en JSON')
     parser.add_argument('--date', type=str, help='Date au format YYYY-MM-DD (defaut: aujourd\'hui)')
     parser.add_argument('--history-days', type=int, default=0,
                        help='Nombre de jours d\'historique (defaut: 0 = aujourd\'hui uniquement)')
